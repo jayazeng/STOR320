@@ -1,0 +1,595 @@
+---
+title: "An Analysis of Employment in London"
+author: "Janelle Zeng and Jessica Lynch"
+date: "6/14/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+```{r, include=FALSE}
+library(tidyverse)
+library(stringr)
+library(cluster)
+library(proxy)
+library(mapproj)
+library(multipanelfigure)
+library(knitr)
+library(readxl)
+library(plyr)
+library(dplyr)
+library(gganimate)
+library(ggplot2)
+library("ggpubr")
+library(maps)
+library(DT)
+library(geojsonio)
+library(broom)
+```
+
+
+```{r, include=FALSE}
+sectors <- c("Area", "M1", 'M2', 'M3', 'M4', 'M5', 'M6', 'M7', 'M8', 'M9', 'F1','F2','F3','F4','F5','F6','F7',"F8","F9")
+i <- c("M1", 'M2', 'M3', 'M4', 'M5', 'M6', 'M7', 'M8', 'M9', 'F1','F2','F3','F4','F5','F6','F7',"F8","F9")
+years <- 2004:2019
+
+df_suffix <- 2004
+
+for (sheet_val in c(4:19)) {
+  df <- readxl::read_xlsx('employment-by-occ-and-gender.xlsx', sheet = sheet_val, skip = 1)
+
+  df <- df %>% select(Area, contains("numerator"))
+
+  colnames(df) <- as.character(sectors)
+  df <- na_if(df, "!")
+  df[ , i] <- apply(df[ , i], 2, function(x) as.numeric(as.character(x)))
+  df <- df[3:34,]
+  df$Year = df_suffix
+  assign(paste("df", df_suffix, sep = "_"), df)
+  df_suffix <- df_suffix + 1
+}
+
+listofDF <- list(df_2004, df_2005, df_2006, df_2007, df_2008, df_2009, df_2010, df_2011, 
+             df_2012, df_2013, df_2014, df_2015, df_2016, df_2017, df_2018, df_2019)
+listofDF <- lapply(listofDF, function(df) {
+  na_if(df, "!")})
+dataset1 <- bind_rows(listofDF)
+dataset1 <- filter(dataset1, Year!=2014)
+dataset1[is.na(dataset1)] <- 0
+
+total <- read_excel('employment-rates-region-quarters-since1992xlsx.xlsx', 2, skip =  1) %>% select(Quarter, contains("%"))
+
+male <- read_excel('employment-rates-region-quarters-since1992xlsx.xlsx', 3, skip =  1) %>% select(Quarter, contains("%"))
+
+female <- read_excel('employment-rates-region-quarters-since1992xlsx.xlsx', 4, skip =  1) %>% select(Quarter, contains("%"))
+
+## Renaming Column Names
+areas <- c("Quarter", 'North_East', 'North_West', 'Yorkshire_and_The_Humber',	'East_Midlands', 'West_Midlands', 'East', 'London', 'South_East', 'South_West', 'Wales', 'Scotland', 'Northern_Ireland', 'England', 'England_and_Wales', 'UK', 'UK_Excluding_London')
+colnames(total) <- as.character(areas)
+colnames(male) <- as.character(areas)
+colnames(female) <- as.character(areas)
+
+## Selecting data from 2000-now
+total <- tail(total, -92)
+male <- tail(male, -92)
+female <- tail(female, -92)
+
+## Create clear quarters
+total <- total[grepl("Jan-Mar", total[["Quarter"]]) | grepl("Apr-Jun", total[["Quarter"]]) | grepl("Jul-Sep", total[["Quarter"]]) | grepl("Oct-Dec", total[["Quarter"]]) , ]
+total <- separate(total, "Quarter", c("Quarter", "Year"), sep = " ")
+
+male <- male[grepl("Jan-Mar", male[["Quarter"]]) | grepl("Apr-Jun", male[["Quarter"]]) | grepl("Jul-Sep", male[["Quarter"]]) | grepl("Oct-Dec", male[["Quarter"]]) , ]
+male <- separate(male, "Quarter", c("Quarter", "Year"), sep = " ")
+
+
+female <- female[grepl("Jan-Mar", female[["Quarter"]]) | grepl("Apr-Jun", female[["Quarter"]]) | grepl("Jul-Sep", female[["Quarter"]]) | grepl("Oct-Dec", female[["Quarter"]]) , ]
+female <- separate(female, "Quarter", c("Quarter", "Year"), sep = " ")
+
+```
+
+
+## Introduction
+
+This report details findings of an analysis of employment in London between 2004-2019. This data is publicly available from the Annual Population Survey, produced by the Office for National Statistics, obtained via the [City of London's](https://data.london.gov.uk/dataset/employment-occupation-type-and-gender-borough) website. We were able to analyze trends in types of employment, employment status, and employment growth. 
+
+This project was of interest because London is a large international community that provides a snapshot into the economic situation of the world. Employment is a good indicator of social and economic success and independence that allows us to quantitatively understand how the role of women have changed. Furthermore, because London is such a primary node in the global economic network, it should be impacted by major global events such as the Syrian Refugee Crisis beginning in Fall 2017, the Globabl Financial Crisis (GFC) of 2007-2008, and the departure of United Kingdom from the EU "Brexit" which was announced in March 2017.
+
+Upon considering the data available, the following questions are viable:
+
+1. What occupations are dominated by women and which are dominated by men? How have these ratios changed over time?
+2. Which parts of London have the most equal ratios of employment based on gender? The least? How do these employment ratios reflect the overall employment rate for each borough? How does ratio of employment based on gender change depending on the occupation groups with the most employees in each borough (do more male dominated occupation groups mean less women are employed)?
+3. Which occupations are growing in London and is this due to more women being employed in these occupations? Which are shrinking?
+4. Overall, how have employment rates changed in London, and has the beginning of 2020 been different, likely as a result of COVID-19? How has the  crisis and its affect of child care affected female employment in London?
+5. How have international events impacted London's workforce?
+
+The following report will detail the methods and results to the above questions. Here is a brief summary of the answers to the questions:
+
+1.
+2.
+3.
+4.
+5.
+
+## Data Description and Exploration
+
+We used two datasets in this analysis. The first one contains the employment rates broken down by major occupation group and gender during 2004 to 2019. This dataset was split into multiple sheets by year and for each year untidy data was recorded. Here is an example of what the dataset excel spreadsheet looks like:
+
+![](datasheet example.PNG)
+
+Here you can see that the data is divided by male and female and occupation group. This means that there are 18 big columns with 4 smaller columns each. Furthermore, the dataset also contains data for other parts of the UK. By only taking the smaller numerator column for each of the 18 big columns, there are a total of 18 variables recorded for each burough (of which there are 32), for each year between 2004-2019. 
+There are 9 major occupation groups that this dataset is grouped into: 
+
+1. managers and senior officials
+2. professional occupations
+3. associate prof & tech occupations
+4. administrative and secretarial occupations
+5. skilled trades occupations
+6. personal service occupations
+7. sales and customer service occupations
+8. process, plant and machine operatives
+9. elementary occupations.
+
+To prepare this data for the analytical methods below, we had to alter the variables to a more compact name such as M1, M2, F1, F2, etc with M or F denoting gender and 1-9 denoting occupation group. We selected only the smaller numerator columns to be the values for each of the 18 variables and removed the data recorded for areas outside of London and its boroughs and changed the values listed as "!" to NA. We did this for each year individually since they were split onto different tabs in the excel spreadsheet. Then, we had to combine all of the dataframes created and add another variable which we called Year. Throgh further analysis, we discovered that some data in 2014 was incorrectly inputed since there were decimal values in the numerator even though the dataset says that the numerator was rounded to the nearest whole number, so we had to discard all the data from 2014. Here is an example of what the tidied dataset looks like:
+
+Employment in London by Gender and Borough
+
+```{r, echo = FALSE}
+kable(dataset1[c(2,3,4,34,35,36),])
+
+occupation_codes <- tibble(Code = c("1", "2", "3", "4", "5", "6", "7", "8", "9"), Occupation = c("managers, directors and senior officials", "professional occupations", "associate prof & tech occupations", "administrative and secretarial occupations", "skilled trades occupations", "caring, leisure and other service occupations", "sales and customer service occupations", "process, plant and machine operatives", "elementary occupations"))
+```
+
+```{r, echo =FALSE, warning=FALSE}
+ dataset1 %>% mutate(male = M1 + M2 + M3 + M4 + M5 + M6 + M7 + M8 + M9,
+                     female = F1 + F2 + F3 + F4 + F5 + F6 + F7 + F8 + F9) %>%
+                 select(Area, male, female, Year) %>% group_by(Year) %>% summarise_all(mean) %>%
+        pivot_longer(contains("male"), names_to = "gender", values_to = "n") %>% select(-Area) %>%
+  ggplot( aes(x=Year, y=n, group=gender, color=gender)) +
+    geom_line() +
+    geom_point() +
+    ggtitle("Employment by gender") +
+    ylab("Number of employees") +
+    scale_x_continuous(breaks=seq(2004,2019,1)) +
+  theme(axis.text.x = element_text(angle = 45))
+```
+
+## Results
+
+This section contains the methods and results obtained for the questions stated above.
+
+### Question 1
+*__What occupations are dominated by women and which are dominated by men? How have these ratios changed over time?__*
+
+First we have to take out the necessary data from the dataframe. We do this by grouping by year and summing up all the columns (M1- M9 and F1- F9)
+```{r, echo=FALSE}
+
+occbygender <- dataset1 %>% 
+               group_by(Year) %>%
+               select(-Area) %>%
+               summarise_all(sum) %>%
+               pivot_longer(-Year, names_to = "occupation", values_to = "n") %>% 
+               mutate(gender = ifelse(startsWith(occupation, "M"), "Male", "Female"),
+                      occupation = str_sub(occupation,2))
+```
+
+
+```{r, echo = FALSE}
+group_by(occbygender, occupation, gender) %>% summarize_if(is.numeric, mean) %>%
+  ggplot(aes(x=occupation, y=n, fill=gender)) + theme_minimal() +
+  geom_bar(stat="identity", position = "fill") +
+  labs(x = "Occupation Code", y = "Percentage", title = "Occupation by Gender based on Average") +
+  geom_hline(yintercept = 0.5, color = "red")
+
+kable(occupation_codes)
+```
+
+From this bar graph we can see that on average there are 3 occupations that are female dominated and those codes are 4, 6, and 7. These job occupations are administrative and secretarial occupations, caring, leisure and other service occupations, and sales and customer service occupations.
+
+```{r, include=FALSE}
+one <- filter(occbygender, occupation == "1") %>% ggplot(aes(x = Year, y = n, fill = gender)) + theme_minimal() +
+  geom_bar(stat="identity", position = "fill") +
+  labs(x = "Year", y = "Percentage", title = "Occupation 1 ") +
+  geom_hline(yintercept = 0.5, color = "red")
+two <- filter(occbygender, occupation == "2") %>% ggplot(aes(x = Year, y = n, fill = gender)) + theme_minimal() +
+  geom_bar(stat="identity", position = "fill") +
+  labs(x = "Year", y = "Percentage", title = "Occupation 2 ") +
+  geom_hline(yintercept = 0.5, color = "red")
+three <- filter(occbygender, occupation == "3") %>% ggplot(aes(x = Year, y = n, fill = gender)) + theme_minimal() +
+  geom_bar(stat="identity", position = "fill") +
+  labs(x = "Year", y = "Percentage", title = "Occupation 3 ") +
+  geom_hline(yintercept = 0.5, color = "red")
+four  <- filter(occbygender, occupation == "4") %>% ggplot(aes(x = Year, y = n, fill = gender)) + theme_minimal() +
+  geom_bar(stat="identity", position = "fill") +
+  labs(x = "Year", y = "Percentage", title = "Occupation 4 ") +
+  geom_hline(yintercept = 0.5, color = "red")
+five  <- filter(occbygender, occupation == "5") %>% ggplot(aes(x = Year, y = n, fill = gender)) + theme_minimal() +
+  geom_bar(stat="identity", position = "fill") +
+  labs(x = "Year", y = "Percentage", title = "Occupation 5 ") +
+  geom_hline(yintercept = 0.5, color = "red")
+six <- filter(occbygender, occupation == "6") %>% ggplot(aes(x = Year, y = n, fill = gender)) + theme_minimal() +
+  geom_bar(stat="identity", position = "fill") +
+  labs(x = "Year", y = "Percentage", title = "Occupation 6 ") +
+  geom_hline(yintercept = 0.5, color = "red")
+seven <- filter(occbygender, occupation == "7") %>% ggplot(aes(x = Year, y = n, fill = gender)) + theme_minimal() +
+  geom_bar(stat="identity", position = "fill") +
+  labs(x = "Year", y = "Percentage", title = "Occupation 7 ") +
+  geom_hline(yintercept = 0.5, color = "red")
+eight <- filter(occbygender, occupation == "8") %>% ggplot(aes(x = Year, y = n, fill = gender)) + theme_minimal() +
+  geom_bar(stat="identity", position = "fill") +
+  labs(x = "Year", y = "Percentage", title = "Occupation 8 ") +
+  geom_hline(yintercept = 0.5, color = "red")
+nine <- filter(occbygender, occupation == "9") %>% ggplot(aes(x = Year, y = n, fill = gender)) + theme_minimal() +
+  geom_bar(stat="identity", position = "fill") +
+  labs(x = "Year", y = "Percentage", title = "Occupation 9 ") +
+  geom_hline(yintercept = 0.5, color = "red")
+
+```
+
+```{r, echo = FALSE}
+figure <- ggarrange(one, two, three, four, five, six, seven, eight, nine,
+                   common.legend = TRUE, legend = "bottom", 
+                   nrow = 1, ncol = 3)
+figure[[1]]
+figure[[2]]
+figure[[3]]
+```
+
+Comparatively, when looking at the change in ratios between male and gender for each occupation over time, we can see that occupations 4,6, and 7 have been majority female for a long period. We can also see that in 2019, occupation 9 became majority female. In order to look more into this, we created bar graphs for occupations 4, 6, 7, and 9 that are not proportioned.
+
+```{r, include=FALSE}
+one <- filter(occbygender, occupation == "1") %>% ggplot(aes(x = Year, y = n, fill = gender)) + theme_minimal() +
+  geom_bar(stat="identity") +
+  labs(x = "Year", y = "N", title = "Occupation 1 ") + 
+  scale_y_continuous(labels = scales::comma)
+two <- filter(occbygender, occupation == "2") %>% ggplot(aes(x = Year, y = n, fill = gender)) + theme_minimal() +
+  geom_bar(stat="identity") +
+  labs(x = "Year", y = "N", title = "Occupation 2 ") + 
+  scale_y_continuous(labels = scales::comma)
+three <- filter(occbygender, occupation == "3") %>% ggplot(aes(x = Year, y = n, fill = gender)) + theme_minimal() +
+  geom_bar(stat="identity") +
+  labs(x = "Year", y = "N", title = "Occupation 3 ") + 
+  scale_y_continuous(labels = scales::comma)
+  
+four  <- filter(occbygender, occupation == "4") %>% ggplot(aes(x = Year, y = n, fill = gender)) + theme_minimal() +
+  geom_bar(stat="identity") +
+  labs(x = "Year", y = "N", title = "Occupation 4 ") + 
+  scale_y_continuous(labels = scales::comma)
+  
+five  <- filter(occbygender, occupation == "5") %>% ggplot(aes(x = Year, y = n, fill = gender)) + theme_minimal() +
+  geom_bar(stat="identity") +
+  labs(x = "Year", y = "N", title = "Occupation 5 ") + 
+  scale_y_continuous(labels = scales::comma)
+  
+six <- filter(occbygender, occupation == "6") %>% ggplot(aes(x = Year, y = n, fill = gender)) + theme_minimal() +
+  geom_bar(stat="identity") +
+  labs(x = "Year", y = "N", title = "Occupation 6 ") + 
+  scale_y_continuous(labels = scales::comma)
+  
+seven <- filter(occbygender, occupation == "7") %>% ggplot(aes(x = Year, y = n, fill = gender)) + theme_minimal() +
+  geom_bar(stat="identity") +
+  labs(x = "Year", y = "N", title = "Occupation 7 ") + 
+  scale_y_continuous(labels = scales::comma)
+  
+eight <- filter(occbygender, occupation == "8") %>% ggplot(aes(x = Year, y = n, fill = gender)) + theme_minimal() +
+  geom_bar(stat="identity") +
+  labs(x = "Year", y = "N", title = "Occupation 8 ") + 
+  scale_y_continuous(labels = scales::comma)
+  
+nine <- filter(occbygender, occupation == "9") %>% ggplot(aes(x = Year, y = n, fill = gender)) + theme_minimal() +
+  geom_bar(stat="identity") +
+  labs(x = "Year", y = "N", title = "Occupation 9 ") + 
+  scale_y_continuous(labels = scales::comma)
+  
+
+```
+
+```{r, echo = FALSE}
+# figure <- ggarrange(one, two, three, four, five, six, seven, eight, nine,
+#                    common.legend = TRUE, legend = "bottom", 
+#                    nrow = 1, ncol = 3)
+# figure[[1]]
+# figure[[2]]
+# figure[[3]]
+
+figure <- ggarrange(four, six, seven, nine,
+                   common.legend = TRUE, legend = "bottom", 
+                   nrow = 1, ncol = 2)
+figure[[1]]
+figure[[2]]
+```
+
+Here we can see that 
+
+### Question 2
+
+*__Which parts of London have the most equal ratios of employment based on gender? The least? How do these employment ratios reflect the overall employment rate for each borough? How does ratio of employment based on gender change depending on the occupation groups with the most employees in each borough (do more male dominated occupation groups mean less women are employed)?__*
+
+We first find the top three occupations in each borough. This can be done by 
+
+
+```{r, include=FALSE}
+occbyarea <- dataset1 %>% group_by(Area, Year) %>% summarise_if(is.numeric, sum)  %>% 
+  mutate(male = M1 + M2 + M3 + M4 + M5 + M6 + M7 + M8 + M9, female = F1 + F2 + F3 + F4 + F5 + F6 + F7 + F8 + F9,
+         one = M1 + F1, two = M2 + F2, three = M3 + F3, four = M4 + F4, five = M5 + F5,
+         six = M6 + F6, seven = M7 + F7, eight = M8 + F8, nine = M9 + F9)
+```
+
+
+```{r}
+avg <- occbyarea %>% select(Area, Year, male, female) %>% mutate(percentage = female / (male + female)) %>%
+  select(Year, percentage, Area) %>% group_by(Area) %>%
+  summarize_if(is.numeric, mean) %>% select(-Year) %>% arrange(desc(percentage))
+  # ggplot(aes(x = Year, y = percentage, group = Area, colors = Area)) +
+  #   geom_line() +
+  #   ylab("Percentage of Female Employees") +
+  #   scale_x_continuous(breaks=seq(2004,2019,1)) + theme(axis.text.x = element_text(angle = 45))
+kable(head(avg, n = 8))
+kable(tail(avg, n = 8))
+
+topboroughs <- head(avg, n = 8) %>% select(Area) %>% unlist
+lowboroughs <- tail(avg, n = 8) %>% select(Area) %>% unlist
+```
+
+Here we can see the top 8 boroughs for highest and lowest percentages of female employees 
+
+```{r}
+occbyarea %>% select(Area, Year, male, female) %>% mutate(percentage = female / (male + female)) %>%
+  select(Year, percentage, Area) %>% group_by(Area) %>% subset(Area %in% topboroughs) %>%
+  ggplot(aes(x = Year, y = percentage)) +
+    geom_line(aes(color = Area)) +
+    ylab("Percentage of Female Employees") +
+    scale_x_continuous(breaks=seq(2004,2019,1)) + 
+    theme(axis.text.x = element_text(angle = 45))
+
+occbyarea %>% select(Area, Year, male, female) %>%
+  select(Year, female, Area) %>% group_by(Area) %>% subset(Area %in% topboroughs) %>%
+  ggplot(aes(x = Year, y = female)) +
+    geom_line(aes(color = Area)) +
+    ylab("Number of Female Employees") +
+    scale_x_continuous(breaks=seq(2004,2019,1)) + 
+    theme(axis.text.x = element_text(angle = 45))
+```
+
+
+```{r, echo=FALSE}
+
+top3 <- occbyarea %>% select(Area, one,two,three,four,five,six,seven,eight,nine) %>% group_by(Area) %>%
+    summarize_if(is.numeric, mean) %>%
+    mutate_if(is.numeric, ceiling)
+
+placeholder <- data.frame(t(top3[-1]))
+colnames(placeholder) <- top3[,1] %>% unlist
+top3 <- placeholder
+datatable(top3[,1:8])
+datatable(top3[,9:16])
+datatable(top3[,17:24])
+datatable(top3[,25:32])
+```
+
+```{r, echo=FALSE}
+Areas <- colnames(top3)
+occ3 <- c("nine, two, four", "two, three, one", "two, four, three", "two, three, nine", 
+          "two, three, four", "two, three, one","two, three, four", "two, three, one",
+          "two, three, four", "two, three, nine", "two, three, one", "two, three, one", 
+          "two, three, nine", "two, four, three", "two, four, three", "two, three, four",
+          "two, three, one", "two, three, one", "three, two, one", "two, three, one", 
+          "two, three, one", "two, three, four", "two, three, one", "nine, two, three",
+          "two, three, four", "two, three, one", "two, three, one", "two, three, four",
+          "two, three, nine", "two, three, four", "two, three, one", "two, three, one")
+kable(tibble(Area = Areas, "Top 3 Occupation Groups" = occ3))
+```
+
+
+### Question 3
+
+#__Which occupations are growing in London and is this due to more women being employed in these occupations? Which are shrinking?__*
+
+
+### Question 4
+
+#__Overall, how have employment rates changed in London, and has the beginning of 2020 been different, likely as a result of COVID-19? How has the  crisis and its affect of child care affected female employment in London?__#
+
+```{r, echo=FALSE}
+# Average Employed in London by Gender (2000-2010)
+
+t_london <- ddply(total, .(Year), summarize, avg_Employed = mean(London))
+t_london <- t_london[5:16, ]
+
+m_london <- ddply(male, .(Year), summarize, avg_Employed = mean(London))
+m_london <- m_london[5:16, ]
+
+f_london <- ddply(female, .(Year), summarize, avg_Employed = mean(London))
+f_london <- f_london[5:16, ]
+
+combined <- tibble (
+  Year = 2004:2015,
+  Total = t_london$avg_Employed,
+  Male = m_london$avg_Employed,
+  Female = f_london$avg_Employed
+)
+
+ggplot(combined, aes(x=Year, y=EmploymentRate)) + 
+  geom_line(aes(y = Total, color="Total"), size=2, alpha=0.9, linetype=1) +
+  geom_line(aes(y = Male, color="Male"), size=2, alpha=0.9) + 
+  geom_line(aes(y = Female, color="Female"), size=2, alpha=0.9) +
+  ggtitle("Average Employment Rate in London by Gender (2005-2015)")
+
+```
+
+```{r, echo=FALSE}
+## bar graph of the gap
+
+# gap <- take male minus by female averages for london for each year so 
+# x-axis: year
+# y-axis: difference
+
+gap <- tibble (
+  Year = t_london$Year,
+  Difference = m_london$avg_Employed - f_london$avg_Employed
+)
+
+barplot(height=gap$Difference, names=gap$Year, 
+        main="Difference in Employment Rates in London (2004-2015)", 
+        xlab="Year",
+        ylab="Percent", 
+        ylim=c(0,20), 
+        col = rgb(0.2, 0.4, 0.6, 0.6))
+```
+
+
+
+```{r, echo=FALSE}
+## Bubble chart of where the most of each gender are employed
+
+# Get the world polygon and extract UK
+
+UK <- map_data("world") %>% filter(region=="UK")
+
+# Get a data frame with longitude, latitude, and size of bubbles (a bubble = a city)
+data <- world.cities %>% filter(country.etc=="UK")
+
+# https://www.r-graph-gallery.com/330-bubble-map-with-ggplot2.html
+
+
+```
+
+
+```{r, echo=FALSE}
+## More line charts to show avg differences in male and female employment by region
+
+countries <- c("Wales", "Scotland", "Northern Ireland", "England", "UK")
+
+m_Wales <- ddply(male, .(Year), summarize, avg_Employed = mean(Wales))
+m_Wales <- m_Wales[1:20, ]
+f_Wales <- ddply(female, .(Year), summarize, avg_Employed = mean(Wales))
+f_Wales <- f_Wales[1:20, ]
+
+m_Scotland <- ddply(male, .(Year), summarize, avg_Employed = mean(Scotland))
+m_Scotland <- m_Scotland[1:20, ]
+f_Scotland <- ddply(female, .(Year), summarize, avg_Employed = mean(Scotland))
+f_Scotland <- f_Scotland[1:20, ]
+
+m_NI <- ddply(male, .(Year), summarize, avg_Employed = mean(Northern_Ireland))
+m_NI <- m_NI[1:20, ]
+f_NI <- ddply(female, .(Year), summarize, avg_Employed = mean(Northern_Ireland))
+f_NI <- f_NI[1:20, ]
+
+m_England <- ddply(male, .(Year), summarize, avg_Employed = mean(England))
+m_England <- m_England[1:20, ]
+f_England <- ddply(female, .(Year), summarize, avg_Employed = mean(England))
+f_England <- f_England[1:20, ]
+
+m_combined <- tibble (
+  Year = 2000:2019,
+  Wales = m_Wales$avg_Employed,
+  Scotland = m_Scotland$avg_Employed,
+  Northern_Ireland = m_NI$avg_Employed,
+  England = m_England$avg_Employed
+)
+
+f_combined <- tibble (
+  Year = 2000:2019,
+  Wales = f_Wales$avg_Employed,
+  Scotland = f_Scotland$avg_Employed,
+  Northern_Ireland = f_NI$avg_Employed,
+  England = f_England$avg_Employed
+)
+
+diff_combined <- tibble (
+  Year = 2000:2019,
+  Wales = m_Wales$avg_Employed - f_Wales$avg_Employed,
+  Scotland = m_Scotland$avg_Employed - f_Scotland$avg_Employed,
+  Northern_Ireland = m_NI$avg_Employed - f_NI$avg_Employed,
+  England = m_England$avg_Employed - f_England$avg_Employed
+)
+
+ggplot(m_combined, aes(x=Year, y=Percent)) + 
+  geom_line(aes(y = Wales, color="Wales"), size=2, alpha=0.9) + 
+  geom_line(aes(y = Scotland, color="Scotland"), size=2, alpha=0.9) +
+  geom_line(aes(y = Northern_Ireland, color="Northern Ireland"), size=2, alpha=0.9) +
+  geom_line(aes(y = England, color="England"), size=2, alpha=0.9) +
+  ggtitle("Average Male Employment Rate By Region (2000-2019)")
+
+ggplot(f_combined, aes(x=Year, y=Percent), ylim=c(0,85)) + 
+  geom_line(aes(y = Wales, color="Wales"), size=2, alpha=0.9) + 
+  geom_line(aes(y = Scotland, color="Scotland"), size=2, alpha=0.9) +
+  geom_line(aes(y = Northern_Ireland, color="Northern Ireland"), size=2, alpha=0.9) +
+  geom_line(aes(y = England, color="England"), size=2, alpha=0.9) +
+  ggtitle("Average Female Employment Rate By Region (2000-2019)")
+
+ggplot(diff_combined, aes(x=Year, y=Percent), ylim=c(0,85)) + 
+  geom_line(aes(y = Wales, color="Wales"), size=2, alpha=0.9) + 
+  geom_line(aes(y = Scotland, color="Scotland"), size=2, alpha=0.9) +
+  geom_line(aes(y = Northern_Ireland, color="Northern Ireland"), size=2, alpha=0.9) +
+  geom_line(aes(y = England, color="England"), size=2, alpha=0.9) +
+  ggtitle("Difference in Employment Rate By Region (2000-2019)")
+```
+
+```{r}
+
+```
+
+
+```{r, warning=FALSE}
+## Choropleth map to show which regions in london have the largest gaps in employment rates between men and women
+
+spdf <- geojson_read("https://skgrange.github.io/www/data/london_boroughs.json",  what = "sp")
+spdf_fortified <- tidy(spdf)
+
+idtoBorough <- function(id) {
+  return(spdf$name[as.numeric(id)])
+}
+
+btoID <- function(b) {
+  return(match(b, spdf$name))
+}
+
+spdf_fortified <- spdf_fortified %>% mutate(name = idtoBorough(id))
+
+plswork <- occbyarea %>% select(Area, Year, male, female) %>% mutate(percentDiff = male/(male+female) - female / (male + female)) %>%
+  select(Year, percentDiff, Area) %>% select(Year, Area, percentDiff) %>% mutate(name = Area)
+
+spatialpls <- left_join(spdf_fortified, plswork) #%>%
+
+#for (i in 2015:2019) {
+spatialpls %>% filter(Year == 2004) %>% #filter(Year == i) +
+ggplot(aes(fill = percentDiff < 0.1, long, lat, group = group)) +
+  geom_polygon() + geom_path(colour="white", lwd=0.01) + coord_equal() +
+  labs(x = "lat", y = "lon") +
+  scale_fill_manual(values=c("#BDBDBD","#2196F3")) +
+  geom_text( aes(long, lat, label = name, group = NULL), size = 2.5) +
+  ggtitle("2004") +
+  theme(axis.text = element_blank(),
+        axis.title = element_blank(),
+        axis.ticks = element_blank()) 
+#}
+```
+
+```{r}
+library(choroplethr)
+library(ggplot2)
+library(grid)
+library(stringr)
+library(magrittr)
+library(psych)
+#library(kirkegaard)
+
+d_geo = ddply(spdf_fortified, .variables = "name", .fun = function(block) {
+  c("long" = mean(block$long),
+    "lat" = mean(block$lat),
+    "long_median" = median(block$long),
+    "lat_median" = median(block$lat),
+    "long_geo" = geometric.mean(block$long),
+    "lat_geo" = geometric.mean(block$lat),
+    "long_harm" = harmonic.mean(block$long),
+    "lat_harm" = harmonic.mean(block$lat),
+    "long_midrange" = averages(block$long, types = "midrange") %>% unname,
+    "lat_midrange" = averages(block$lat, types = "midrange") %>% unname
+    )
+})
+```
+
+
+## Conclusion
